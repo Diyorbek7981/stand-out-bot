@@ -64,7 +64,7 @@ async def start(message: Message, state: FSMContext):
 
 @router.message(Command("help"))
 async def state_name(message: Message):
-    res = requests.get(url=f"{API}/users/{ADMIN}").json()
+    req = requests.get(url=f"{API}/users/{ADMIN}").json()
     res = requests.get(f"{API}/users/{message.from_user.id}").json()
     language = res["language"]
     help_text = {
@@ -74,7 +74,7 @@ async def state_name(message: Message):
     }
     txt = help_text[language, help_text["en"]]
     await message.answer(
-        f"{txt}\nhttps://t.me/{res['username']}", reply_markup=menu)
+        f"{txt}\nhttps://t.me/{req['username']}", reply_markup=menu)
 
 
 @router.callback_query(lambda c: c.data.startswith("stlang_"))
