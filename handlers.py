@@ -519,8 +519,9 @@ async def state_name(message: Message, state: FSMContext, bot: Bot):
             f"👤 Ariza Beruvchi: {data.get('name')}\n"
             f"📅 Yosh: {data.get('age')}\n"
             f"🌐 User name: @{message.from_user.username}\n"
-            f"📱 Telefon raqamingiz: {data.get('phone')}\n"
-            f"🎓 Darajangiz: {data.get('certificate')}\n"
+            f"📱 Telefon raqam: {data.get('phone')}\n"
+            f"🎓 Daraja: {data.get('certificate')}\n\n\n"
+            f"✔️ Arizani sayt orqli tasdiqlash  {API}/admin"
         )
 
         api_data = {
