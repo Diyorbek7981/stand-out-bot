@@ -1,21 +1,80 @@
-from aiogram import F, Router
+from aiogram import F, Router, Bot
 from aiogram.types import Message
 from aiogram.types import CallbackQuery
 from buttons.inline import language_button, subscribe_keyboard, certificate_button
-from buttons.reply import get_menu, get_phone, check
+from buttons.reply import get_menu, get_phone, check, menu
 import requests
-from config import API, CHANNEL
+from config import API, CHANNEL, ADMIN
 from aiogram.fsm.context import FSMContext
 from states import SignupStates
 from aiogram.types import ReplyKeyboardRemove
+import json
+import qrcode
+import os
+from aiogram.types import FSInputFile
+from aiogram.filters import Command, CommandStart
 
 router = Router()
 
 
-@router.message(F.text == '/start')
-async def start(message: Message):
-    text = "Tilni tanlang 🇺🇿| Choose your language 🇬🇧| Выберите язык 🇷🇺"
-    await message.answer(text, reply_markup=language_button)
+@router.message(CommandStart())
+async def start(message: Message, state: FSMContext):
+    bot = message.bot
+    member = await bot.get_chat_member(chat_id=f"@{CHANNEL}", user_id=message.from_user.id)
+    try:
+        response = requests.get(f"{API}/users/{message.from_user.id}")
+        if response.status_code != 200:
+            text = "Tilni tanlang 🇺🇿| Choose your language 🇬🇧| Выберите язык 🇷🇺"
+            await message.answer(text, reply_markup=language_button)
+            return
+        req = response.json()
+        language = req.get("language", "en")
+
+        if member.status not in ["member", "administrator", "creator"]:
+            unsub_message = {
+                "uz": "❌ Hali kanalga a’zo bo‘lmadingiz!\n\n📢 Kanalga a’zo bo‘ling va qayta tekshirish tugmasini bosing:",
+                "en": "❌ You are not subscribed to the channel!\n\n📢 Please subscribe to the channel and click the check button again:",
+                "ru": "❌ Вы не подписаны на канал!\n\n📢 Подпишитесь на канал и нажмите кнопку проверки снова:"
+            }
+            txt = unsub_message.get(language, "Unknown language ❌")
+            await message.answer(text=txt, reply_markup=subscribe_keyboard(language))
+            return
+
+        if req["is_registered"] == False:
+            full_name_prompt = {
+                "uz": "👤 To‘liq ismingizni kiriting (F.I.Sh):",
+                "en": "👤 Enter your full name (First, Last, and Surname):",
+                "ru": "👤 Введите ваше полное имя (Ф.И.О):"
+            }
+            txt = full_name_prompt.get(language, "Unknown language ❌")
+            await message.answer(text=txt, reply_markup=ReplyKeyboardRemove())
+            await state.set_state(SignupStates.name)
+            return
+
+        services_text = {
+            "uz": "Bizning xizmatlar bilan tanishib chiqing",
+            "en": "Explore our services",
+            "ru": "Ознакомьтесь с нашими услугами"
+        }
+        txt = services_text.get(language, services_text["en"])
+        await message.answer(f"🌟 {message.from_user.full_name}  {txt}", reply_markup=menu(language))
+    except Exception as e:
+        await message.answer(f"⚠️ So‘rovda xatolik: {e}", show_alert=True)
+
+
+@router.message(Command("help"))
+async def state_name(message: Message):
+    res = requests.get(url=f"{API}/users/{ADMIN}").json()
+    res = requests.get(f"{API}/users/{message.from_user.id}").json()
+    language = res["language"]
+    help_text = {
+        "uz": "👨🏻‍💻 Yordam uchun Adminga murojaat qiling",
+        "en": "👨🏻‍💻Please contact the Admin for assistance",
+        "ru": "👨🏻‍💻 Для помощи обратитесь к Администратору"
+    }
+    txt = help_text[language, help_text["en"]]
+    await message.answer(
+        f"{txt}\nhttps://t.me/{res['username']}", reply_markup=menu)
 
 
 @router.callback_query(lambda c: c.data.startswith("stlang_"))
@@ -23,122 +82,287 @@ async def process_language(callback: CallbackQuery):
     await callback.message.delete()
     lang_code = callback.data.split("_")[1]
     user_id = callback.from_user.id
-    response = requests.get(f"{API}/users/{user_id}")
+    bot = callback.bot
+    member = await bot.get_chat_member(chat_id=f"@{CHANNEL}", user_id=user_id)
+    try:
+        response = requests.get(f"{API}/users/{user_id}")
+        if response.status_code != 200:
+            payload = {
+                "telegram_id": user_id,
+                "user_name": callback.from_user.username,
+                "language": lang_code,
+            }
+            try:
+                response = requests.post(url=f"{API}/create_user/", data=payload)
+                if response.status_code in [200, 201]:
+                    messages = {
+                        "uz": "✅ Siz O‘zbek tilini tanladingiz 🇺🇿\n\n❗ Botdan foydalanish uchun avval kanalga a’zo bo‘ling.",
+                        "en": "✅ You selected English 🇬🇧\n\n❗ Please join our channel first to use the bot.",
+                        "ru": "✅ Вы выбрали Русский 🇷🇺\n\n❗ Пожалуйста, сначала подпишитесь на наш канал, чтобы использовать бота."
+                    }
 
-    messages = {
-        "uz": "✅ Siz O‘zbek tilini tanladingiz 🇺🇿\n\n❗ Botdan foydalanish uchun avval kanalga a’zo bo‘ling.",
-        "en": "✅ You selected English 🇬🇧\n\n❗ Please join our channel first to use the bot.",
-        "ru": "✅ Вы выбрали Русский 🇷🇺\n\n❗ Пожалуйста, сначала подпишитесь на наш канал, чтобы использовать бота."
-    }
+                    text = messages.get(lang_code, "Unknown language ❌")
+                    await callback.message.answer(text, reply_markup=subscribe_keyboard(lang_code))
+                    return
+                else:
+                    return f"⚠️Error in the request: {response.status_code} | {response.text}"
+            except Exception as e:
+                return f"[❌] Error in the request: {e}"
 
-    if response.status_code != 200:
-        payload = {
-            "telegram_id": user_id,
-            "user_name": callback.from_user.username,
-            "language": lang_code,
-        }
-        try:
-            response = requests.post(url=f"{API}/create_user/", data=payload)
-            if response.status_code in [200, 201]:
-                text = messages.get(lang_code, "Unknown language ❌")
+        req = response.json()
+        language = req.get("language", "en")
 
-                await callback.message.answer(text, reply_markup=subscribe_keyboard())
-            else:
-                return f"⚠️Error in the request: {response.status_code} | {response.text}"
-        except Exception as e:
-            return f"[❌] Error in the request: {e}"
-    else:
+        if member.status not in ["member", "administrator", "creator"]:
+            unsub_message = {
+                "uz": "❌ Hali kanalga a’zo bo‘lmadingiz!\n\n📢 Kanalga a’zo bo‘ling va qayta tekshirish tugmasini bosing:",
+                "en": "❌ You are not subscribed to the channel!\n\n📢 Please subscribe to the channel and click the check button again:",
+                "ru": "❌ Вы не подписаны на канал!\n\n📢 Подпишитесь на канал и нажмите кнопку проверки снова:"
+            }
+            txt = unsub_message.get(language, "Unknown language ❌")
+            await callback.message.answer(text=txt, reply_markup=subscribe_keyboard(language))
+            return
+
+        if req["is_registered"] == False:
+            full_name_prompt = {
+                "uz": "👤 To‘liq ismingizni kiriting (F.I.Sh):",
+                "en": "👤 Enter your full name (First, Last, and Surname):",
+                "ru": "👤 Введите ваше полное имя (Ф.И.О):"
+            }
+            txt = full_name_prompt.get(language, "Unknown language ❌")
+            await callback.message.answer(text=txt, reply_markup=ReplyKeyboardRemove())
+            await callback.state.set_state(SignupStates.name)
+            return
+
         payload = {
             "language": lang_code,
         }
         try:
             response = requests.patch(url=f"{API}/user_update/{user_id}/", json=payload)
             if response.status_code in [200, 201]:
+                messages = {
+                    "uz": "✅ Siz O‘zbek tilini tanladingiz 🇺🇿",
+                    "en": "✅ You selected English 🇬🇧",
+                    "ru": "✅ Вы выбрали Русский 🇷🇺"
+                }
                 text = messages.get(lang_code, "Unknown language ❌")
-
-                await callback.message.answer(text, reply_markup=subscribe_keyboard())
+                await callback.message.answer(text, reply_markup=menu(lang_code))
             else:
                 return f"⚠️Error in the request: {response.status_code} | {response.text}"
         except Exception as e:
             return f"[❌] Error in the request: {e}"
 
-    await callback.answer()
+        await callback.answer()
+    except Exception as e:
+        await callback.message.answer(f"⚠️ So‘rovda xatolik: {e}", show_alert=True)
 
 
 @router.callback_query(lambda c: c.data == "check_sub")
-async def check_subscription(callback_query: CallbackQuery):
-    await callback_query.message.delete()
-    user_id = callback_query.from_user.id
-    bot = callback_query.bot
+async def check_subscription(callback: CallbackQuery):
+    await callback.message.delete()
+    user_id = callback.from_user.id
+    bot = callback.bot
 
     try:
         response = requests.get(f"{API}/users/{user_id}")
         if response.status_code != 200:
-            await callback_query.answer("⚠️ Xatolik: foydalanuvchi topilmadi!", show_alert=True)
+            text = "Tilni tanlang 🇺🇿| Choose your language 🇬🇧| Выберите язык 🇷🇺"
+            await callback.message.answer(text, reply_markup=language_button)
             return
+
         req = response.json()
-        language = req.get("language", "uz")
-    except Exception as e:
-        await callback_query.answer(f"⚠️ So‘rovda xatolik: {e}", show_alert=True)
-        return
+        language = req.get("language", "en")
+        member = await bot.get_chat_member(chat_id=f"@{CHANNEL}", user_id=user_id)
 
-    messages = {
-        "uz": "✅ Rahmat! Siz kanalga a’zo bo‘ldingiz.\n\n📝 Tanlovda qatnashish uchun ro‘yxatdan o‘ting.",
-        "en": "✅ Thank you! You have joined the channel.\n\n📝 Please register to participate in the contest.",
-        "ru": "✅ Спасибо! Вы подписались на канал.\n\n📝 Пожалуйста, зарегистрируйтесь, чтобы участвовать в конкурсе."
-    }
+        if req["is_registered"] == False:
+            messages = {
+                "uz": "✅ Rahmat! Siz kanalga a’zo bo‘ldingiz.\n\n📝 Tanlovda qatnashish uchun ro‘yxatdan o‘ting.",
+                "en": "✅ Thank you! You have joined the channel.\n\n📝 Please register to participate in the contest.",
+                "ru": "✅ Спасибо! Вы подписались на канал.\n\n📝 Пожалуйста, зарегистрируйтесь, чтобы участвовать в конкурсе."
+            }
 
-    unsub_message = {
-        "uz": "❌ Hali kanalga a’zo bo‘lmadingiz!\n\n📢 Kanalga a’zo bo‘ling va qayta tekshirish tugmasini bosing:",
-        "en": "❌ You are not subscribed to the channel!\n\n📢 Please subscribe to the channel and click the check button again:",
-        "ru": "❌ Вы не подписаны на канал!\n\n📢 Подпишитесь на канал и нажмите кнопку проверки снова:"
-    }
-
-    member = await bot.get_chat_member(chat_id=f"@{CHANNEL}", user_id=user_id)
-    txt = messages.get(language, "Unknown language ❌")
-    if member.status in ["member", "administrator", "creator"]:
-        try:
-            data = {"is_channel_member": True}
-            response = requests.patch(url=f"{API}/user_update/{user_id}/", json=data)
-            if response.status_code in [200, 204]:
-                await callback_query.message.answer(text=txt, reply_markup=get_menu(language))
+            if member.status in ["member", "administrator", "creator"]:
+                txtunre = messages.get(language, "Unknown language ❌")
+                await callback.message.answer(text=txtunre, reply_markup=get_menu(language))
+                return
             else:
-                await callback_query.answer(f"⚠️ Error in the request: {response.status_code} - {response.text}")
-        except Exception as backend_err:
-            return f"❌ Backend Error: {backend_err}"
+                unsub_message = {
+                    "uz": "❌ Hali kanalga a’zo bo‘lmadingiz!\n\n📢 Kanalga a’zo bo‘ling va qayta tekshirish tugmasini bosing:",
+                    "en": "❌ You are not subscribed to the channel!\n\n📢 Please subscribe to the channel and click the check button again:",
+                    "ru": "❌ Вы не подписаны на канал!\n\n📢 Подпишитесь на канал и нажмите кнопку проверки снова:"
+                }
 
-    else:
-        txt = unsub_message.get(language, "Unknown language ❌")
-        await callback_query.message.answer(text=txt, reply_markup=subscribe_keyboard())
+                txt = unsub_message.get(language, "Unknown language ❌")
+                await callback.message.answer(text=txt, reply_markup=subscribe_keyboard(language))
+                return
+
+        if member.status not in ["member", "administrator", "creator"]:
+            unsub_message = {
+                "uz": "❌ Hali kanalga a’zo bo‘lmadingiz!\n\n📢 Kanalga a’zo bo‘ling va qayta tekshirish tugmasini bosing:",
+                "en": "❌ You are not subscribed to the channel!\n\n📢 Please subscribe to the channel and click the check button again:",
+                "ru": "❌ Вы не подписаны на канал!\n\n📢 Подпишитесь на канал и нажмите кнопку проверки снова:"
+            }
+
+            txt = unsub_message.get(language, "Unknown language ❌")
+            await callback.message.answer(text=txt, reply_markup=subscribe_keyboard(language))
+        else:
+            messages = {
+                "uz": "✅ Rahmat! Siz kanalga a’zo bo‘ldingiz.",
+                "en": "✅ Thank you! You have joined the channel.",
+                "ru": "✅ Спасибо! Вы подписались на канал."
+            }
+            txtunre = messages.get(language, "Unknown language ❌")
+            await callback.message.answer(text=txtunre, reply_markup=menu(language))
+
+    except Exception as e:
+        await callback.message.answer(f"⚠️ So‘rovda xatolik: {e}", show_alert=True)
 
 
 @router.message(lambda msg: msg.text in ["📝 Ro'yhatdan o'tish", "📝 Register", "📝 Регистрация"])
 async def register_button_handler(message: Message, state: FSMContext):
-    res = requests.get(f"{API}/users/{message.from_user.id}").json()
-    language = res["language"]
+    bot = message.bot
+    member = await bot.get_chat_member(chat_id=f"@{CHANNEL}", user_id=message.from_user.id)
+    try:
+        response = requests.get(f"{API}/users/{message.from_user.id}")
+        if response.status_code != 200:
+            text = "Tilni tanlang 🇺🇿| Choose your language 🇬🇧| Выберите язык 🇷🇺"
+            await message.answer(text, reply_markup=language_button)
+            return
+        req = response.json()
+        language = req.get("language", "en")
 
-    if res["is_channel_member"] == False:
-        unsub_message = {
-            "uz": "❌ Hali kanalga a’zo bo‘lmadingiz!\n\n📢 Kanalga a’zo bo‘ling va qayta tekshirish tugmasini bosing:",
-            "en": "❌ You are not subscribed to the channel!\n\n📢 Please subscribe to the channel and click the check button again:",
-            "ru": "❌ Вы не подписаны на канал!\n\n📢 Подпишитесь на канал и нажмите кнопку проверки снова:"
+        if member.status not in ["member", "administrator", "creator"]:
+            unsub_message = {
+                "uz": "❌ Hali kanalga a’zo bo‘lmadingiz!\n\n📢 Kanalga a’zo bo‘ling va qayta tekshirish tugmasini bosing:",
+                "en": "❌ You are not subscribed to the channel!\n\n📢 Please subscribe to the channel and click the check button again:",
+                "ru": "❌ Вы не подписаны на канал!\n\n📢 Подпишитесь на канал и нажмите кнопку проверки снова:"
+            }
+            txt = unsub_message.get(language, "Unknown language ❌")
+            await message.answer(text=txt, reply_markup=subscribe_keyboard(language))
+            return
+
+        if req["is_registered"] == False:
+            full_name_prompt = {
+                "uz": "👤 To‘liq ismingizni kiriting (F.I.Sh):",
+                "en": "👤 Enter your full name (First, Last, and Surname):",
+                "ru": "👤 Введите ваше полное имя (Ф.И.О):"
+            }
+            txt = full_name_prompt.get(language, "Unknown language ❌")
+            await message.answer(text=txt, reply_markup=ReplyKeyboardRemove())
+            await state.set_state(SignupStates.name)
+            return
+
+        services_text = {
+            "uz": "Bizning xizmatlar bilan tanishib chiqing",
+            "en": "Explore our services",
+            "ru": "Ознакомьтесь с нашими услугами"
         }
-        txt = unsub_message.get(language, "Unknown language ❌")
-        await message.answer(text=txt, reply_markup=subscribe_keyboard())
-        return
+        txt = services_text.get(language, services_text["en"])
+        await message.answer(f"🌟 {message.from_user.full_name}  {txt}", reply_markup=menu(language))
 
-    if res["is_registered"] == False:
-        full_name_prompt = {
-            "uz": "👤 To‘liq ismingizni kiriting (F.I.Sh):",
-            "en": "👤 Enter your full name (First, Last, and Surname):",
-            "ru": "👤 Введите ваше полное имя (Ф.И.О):"
-        }
-        txt = full_name_prompt.get(language, "Unknown language ❌")
-        await message.answer(text=txt)
-        await state.set_state(SignupStates.name)
-    else:
-        await message.answer("✅ Siz ro‘yxatdan o‘tgansiz")
+    except Exception as e:
+        await message.answer(f"⚠️ Error in the request: {e}", show_alert=True)
 
+
+@router.message(Command("stop"))
+async def state_name(message: Message, state: FSMContext):
+    bot = message.bot
+    member = await bot.get_chat_member(chat_id=f"@{CHANNEL}", user_id=message.from_user.id)
+    try:
+        response = requests.get(f"{API}/users/{message.from_user.id}")
+        if response.status_code != 200:
+            text = "Tilni tanlang 🇺🇿| Choose your language 🇬🇧| Выберите язык 🇷🇺"
+            await message.answer(text, reply_markup=language_button)
+            return
+        req = response.json()
+        language = req.get("language", "en")
+
+        if member.status not in ["member", "administrator", "creator"]:
+            unsub_message = {
+                "uz": "❌ Hali kanalga a’zo bo‘lmadingiz!\n\n📢 Kanalga a’zo bo‘ling va qayta tekshirish tugmasini bosing:",
+                "en": "❌ You are not subscribed to the channel!\n\n📢 Please subscribe to the channel and click the check button again:",
+                "ru": "❌ Вы не подписаны на канал!\n\n📢 Подпишитесь на канал и нажмите кнопку проверки снова:"
+            }
+            txt = unsub_message.get(language, "Unknown language ❌")
+            await message.answer(text=txt, reply_markup=subscribe_keyboard(language))
+            return
+
+        curent = await state.get_state()
+        if curent == None:
+            no_data_text = {
+                "uz": "🔍 To'xtatish uchun ma'lumot mavjud emas",
+                "en": "🔍 No data available to stop",
+                "ru": "🔍 Нет данных для остановки"
+            }
+            txt = no_data_text.get(language, "Unknown language ❌")
+            await message.answer(txt)
+        else:
+            cancelled_text = {
+                "uz": "❌ Jarayon bekor qilindi",
+                "en": "❌ Process has been cancelled",
+                "ru": "❌ Процесс был отменён"
+            }
+            txt = cancelled_text.get(language, "Unknown language ❌")
+            await message.answer(txt)
+            await state.clear()
+    except Exception as e:
+        await message.answer(f"⚠️ Error in the request: {e}", show_alert=True)
+
+
+@router.message(Command("new"))
+async def state_name(message: Message, state: FSMContext):
+    bot = message.bot
+    member = await bot.get_chat_member(chat_id=f"@{CHANNEL}", user_id=message.from_user.id)
+    curent = await state.get_state()
+    try:
+        response = requests.get(f"{API}/users/{message.from_user.id}")
+        if response.status_code != 200:
+            text = "Tilni tanlang 🇺🇿| Choose your language 🇬🇧| Выберите язык 🇷🇺"
+            await message.answer(text, reply_markup=language_button)
+            return
+        req = response.json()
+        language = req.get("language", "en")
+
+        if member.status not in ["member", "administrator", "creator"]:
+            unsub_message = {
+                "uz": "❌ Hali kanalga a’zo bo‘lmadingiz!\n\n📢 Kanalga a’zo bo‘ling va qayta tekshirish tugmasini bosing:",
+                "en": "❌ You are not subscribed to the channel!\n\n📢 Please subscribe to the channel and click the check button again:",
+                "ru": "❌ Вы не подписаны на канал!\n\n📢 Подпишитесь на канал и нажмите кнопку проверки снова:"
+            }
+            txt = unsub_message.get(language, "Unknown language ❌")
+            await message.answer(text=txt, reply_markup=subscribe_keyboard(language))
+            return
+
+        if req["is_registered"] == False:
+            full_name_prompt = {
+                "uz": "👤 To‘liq ismingizni kiriting (F.I.Sh):",
+                "en": "👤 Enter your full name (First, Last, and Surname):",
+                "ru": "👤 Введите ваше полное имя (Ф.И.О):"
+            }
+            txt = full_name_prompt.get(language, "Unknown language ❌")
+
+            if curent == None:
+                await message.answer(text=txt, reply_markup=ReplyKeyboardRemove())
+                await state.set_state(SignupStates.name)
+                return
+            else:
+                await state.clear()
+                await message.answer(text=txt, reply_markup=ReplyKeyboardRemove())
+                await state.set_state(SignupStates.name)
+                return
+        else:
+            already_registered_text = {
+                "uz": "✅ Siz ro‘yxatdan o‘tgansiz",
+                "en": "✅ You are already registered",
+                "ru": "✅ Вы уже зарегистрированы"
+            }
+
+            txt = already_registered_text.get(language, already_registered_text["en"])
+            await message.answer(f"{message.from_user.full_name}  {txt}", reply_markup=menu(language))
+    except Exception as e:
+        await message.answer(f"⚠️ Error in the request: {e}", show_alert=True)
+
+
+# /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 @router.message(SignupStates.name)
 async def state_name(message: Message, state: FSMContext):
@@ -277,6 +501,196 @@ async def state_certificate(callback: CallbackQuery, state: FSMContext):
         txt_conf = conf_msg.get(language, "Unknown language ❌")
         txt_template = templates.get(language, "Unknown language ❌")
         await callback.message.answer(f"{txt}\n\n{txt_template}\n\n{txt_conf}", reply_markup=check)
-
+        await state.set_state(SignupStates.check)
     else:
         await callback.message.answer("❌ Please send the correct level", reply_markup=certificate_button)
+
+
+@router.message(SignupStates.check)
+async def state_name(message: Message, state: FSMContext, bot: Bot):
+    req = requests.get(f"{API}/users/{message.from_user.id}").json()
+    language = req["language"]
+    if message.text == "✔️":
+        data = await state.get_data()
+
+        user = (
+            f"{message.from_user.mention_html('👤📝 Ma`lumotlar / Информация:')}\n\n"
+            f"📝 ID: {req.get('id')}\n"
+            f"👤 Ariza Beruvchi: {data.get('name')}\n"
+            f"📅 Yosh: {data.get('age')}\n"
+            f"🌐 User name: @{message.from_user.username}\n"
+            f"📱 Telefon raqamingiz: {data.get('phone')}\n"
+            f"🎓 Darajangiz: {data.get('certificate')}\n"
+        )
+
+        api_data = {
+            'first_name': data.get('name'),
+            'age': data.get('age'),
+            'phone_number': data.get('phone'),
+            'certificate': data.get('certificate'),
+            'is_registered': True
+        }
+
+        postResponse = requests.patch(url=f"{API}/user_update/{message.from_user.id}/", json=api_data)
+
+        if postResponse.status_code in (200, 201):
+            json.dumps(postResponse.json(), indent=4)
+            await bot.send_message(ADMIN, f"🌟 Yangi ariza:\n\n{user}", parse_mode='HTML')
+            messages = {
+                "uz": "✅ Arizangiz qabul qilindi",
+                "en": "✅ Your application has been accepted",
+                "ru": "✅ Ваша заявка принята"
+            }
+            txt = messages.get(language, "Unknown language ❌")
+            await message.answer(txt, reply_markup=menu(language))
+            await state.clear()
+
+        else:
+            error_text = {
+                "uz": (
+                    "❌ Ma'lumotlaringiz saqlanmadi\n\n"
+                    "🗑 Jarayonni bekor qilish: /stop\n"
+                    "🔄 Jarayonni boshidan boshlash: /new"
+                ),
+                "en": (
+                    "❌ Your data was not saved\n\n"
+                    "🗑 Cancel the process: /stop\n"
+                    "🔄 Restart the process: /new"
+                ),
+                "ru": (
+                    "❌ Ваши данные не сохранены\n\n"
+                    "🗑 Отменить процесс: /stop\n"
+                    "🔄 Начать процесс заново: /new"
+                )
+            }
+            text = error_text.get(language, error_text["en"])
+            await message.answer(text, reply_markup=check)
+    else:
+        txt = {
+            "uz": (
+                "✔️ Ma'lumotlarni tasdiqlash: Ha\n"
+                "🗑 Jarayonni bekor qilish: /stop\n"
+                "🔄 Jarayonni boshidan boshlash: /new"
+            ),
+            "en": (
+                "✔️ Confirm the information: Yes\n"
+                "🗑 Cancel the process: /stop\n"
+                "🔄 Restart the process: /new"
+            ),
+            "ru": (
+                "✔️ Подтвердить информацию: Да\n"
+                "🗑 Отменить процесс: /stop\n"
+                "🔄 Начать процесс заново: /new"
+            )
+        }
+        text = txt.get(language, txt["en"])
+        await message.answer(txt, reply_markup=check)
+
+
+@router.message(lambda msg: msg.text in ["📝 Ruhsatnoma olish", "📝 Get a permit", "📝 Получить разрешение"])
+async def register_button_handler(message: Message):
+    bot = message.bot
+    member = await bot.get_chat_member(chat_id=f"@{CHANNEL}", user_id=message.from_user.id)
+    try:
+        response = requests.get(f"{API}/users/{message.from_user.id}")
+        if response.status_code != 200:
+            text = "Tilni tanlang 🇺🇿| Choose your language 🇬🇧| Выберите язык 🇷🇺"
+            await message.answer(text, reply_markup=language_button)
+            return
+
+        res = response.json()
+        language = res.get("language", "en")
+
+        if member.status not in ["member", "administrator", "creator"]:
+            unsub_message = {
+                "uz": "❌ Hali kanalga a’zo bo‘lmadingiz!\n\n📢 Kanalga a’zo bo‘ling va qayta tekshirish tugmasini bosing:",
+                "en": "❌ You are not subscribed to the channel!\n\n📢 Please subscribe to the channel and click the check button again:",
+                "ru": "❌ Вы не подписаны на канал!\n\n📢 Подпишитесь на канал и нажмите кнопку проверки снова:"
+            }
+            txt = unsub_message.get(language, "Unknown language ❌")
+            await message.answer(text=txt, reply_markup=subscribe_keyboard(language))
+            return
+
+        if res["is_confirmed"] == False:
+            response_text = {
+                "uz": "🕒 Arizangiz ko‘rib chiqilmoqda. Tez orada javob olasiz.",
+                "en": "🕒 Your application is being reviewed. You will receive a response soon.",
+                "ru": "🕒 Ваша заявка рассматривается. Скоро вы получите ответ."
+            }
+
+            txt = response_text.get(language, "Unknown language ❌")
+            await message.answer(text=txt, reply_markup=menu(language))
+            return
+
+        user_info = (
+            f"Ism: {res.get('first_name')}\n"
+            f"Yosh: {res.get('age')}\n"
+            f"Username: @{message.from_user.username}\n"
+            f"Telefon: {res.get('phone_number')}\n"
+            f"Daraja: {res.get('certificate')}"
+        )
+
+        qr = qrcode.QRCode(version=1, box_size=10, border=4)
+        qr.add_data(user_info)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+
+        file_path = f"qr_{message.from_user.id}.png"
+        img.save(file_path)
+
+        file = FSInputFile(file_path)
+
+        qr_ready_text = {
+            "uz": "✅ Sizning ma'lumotlaringiz QR-kod ko‘rinishda tayyorlandi",
+            "en": "✅ Your information has been prepared as a QR code",
+            "ru": "✅ Ваша информация подготовлена в виде QR-кода"
+        }
+        txt = qr_ready_text.get(language, "Unknown language ❌")
+        await message.answer_photo(photo=file, caption=txt, reply_markup=menu(language))
+
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
+    except Exception as e:
+        await message.answer(f"⚠️ Error in the request: {e}", show_alert=True)
+
+
+@router.message(lambda msg: msg.text in ["🌐 Tilni o‘zgartirish", "🌐 Change language", "🌐 Изменить язык"])
+async def register_button_handler(message: Message, state: FSMContext):
+    bot = message.bot
+    member = await bot.get_chat_member(chat_id=f"@{CHANNEL}", user_id=message.from_user.id)
+    try:
+        response = requests.get(f"{API}/users/{message.from_user.id}")
+        if response.status_code != 200:
+            text = "Tilni tanlang 🇺🇿| Choose your language 🇬🇧| Выберите язык 🇷🇺"
+            await message.answer(text, reply_markup=language_button)
+            return
+
+        req = response.json()
+        language = req.get("language", "en")
+
+        if member.status not in ["member", "administrator", "creator"]:
+            unsub_message = {
+                "uz": "❌ Hali kanalga a’zo bo‘lmadingiz!\n\n📢 Kanalga a’zo bo‘ling va qayta tekshirish tugmasini bosing:",
+                "en": "❌ You are not subscribed to the channel!\n\n📢 Please subscribe to the channel and click the check button again:",
+                "ru": "❌ Вы не подписаны на канал!\n\n📢 Подпишитесь на канал и нажмите кнопку проверки снова:"
+            }
+            txt = unsub_message.get(language, "Unknown language ❌")
+            await message.answer(text=txt, reply_markup=subscribe_keyboard(language))
+            return
+
+        if req["is_registered"] == False:
+            full_name_prompt = {
+                "uz": "👤 To‘liq ismingizni kiriting (F.I.Sh):",
+                "en": "👤 Enter your full name (First, Last, and Surname):",
+                "ru": "👤 Введите ваше полное имя (Ф.И.О):"
+            }
+            txt = full_name_prompt.get(language, "Unknown language ❌")
+            await message.answer(text=txt, reply_markup=ReplyKeyboardRemove())
+            await state.set_state(SignupStates.name)
+            return
+
+        text = "Tilni tanlang 🇺🇿| Choose your language 🇬🇧| Выберите язык 🇷🇺"
+        await message.answer(text, reply_markup=language_button)
+    except Exception as e:
+        await message.answer(f"⚠️ So‘rovda xatolik: {e}", show_alert=True)

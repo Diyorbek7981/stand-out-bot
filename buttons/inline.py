@@ -12,13 +12,28 @@ language_button = InlineKeyboardMarkup(
     ], resize_keyboard=True
 )
 
+channel_subscribe_text = {
+    "uz": "📢 Kanalga a’zo bo‘lish",
+    "en": "📢 Subscribe to the channel",
+    "ru": "📢 Подписаться на канал"
+}
 
-def subscribe_keyboard():  # ///////////////////////////  Resume
+check_text = {
+    "uz": "✅ Tekshirish",
+    "en": "✅ Check",
+    "ru": "✅ Проверить"
+}
+
+
+def subscribe_keyboard(language: str):  # ///////////////////////////  Resume
     markup = InlineKeyboardBuilder()
-    markup.button(text="📢 Kanalga a’zo bo‘lish", url=f"https://t.me/{CHANNEL}")
-    markup.button(text="✅ Tekshirish", callback_data="check_sub")
+    text = channel_subscribe_text.get(language, channel_subscribe_text["en"])
+    txt = check_text.get(language, check_text["en"])
+    markup.button(text=text, url=f"https://t.me/{CHANNEL}")
+    markup.button(text=txt, callback_data="check_sub")
     markup.adjust(1)
     return markup.as_markup()
+
 
 certificate_button = InlineKeyboardMarkup(
     inline_keyboard=[
