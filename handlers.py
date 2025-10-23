@@ -74,7 +74,7 @@ async def state_name(message: Message):
     }
     txt = help_text[language, help_text["en"]]
     await message.answer(
-        f"{txt}\nhttps://t.me/{req['username']}", reply_markup=menu)
+        f"{txt}\nhttps://t.me/{req['user_name']}", reply_markup=menu)
 
 
 @router.callback_query(lambda c: c.data.startswith("stlang_"))
