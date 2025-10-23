@@ -63,18 +63,40 @@ async def start(message: Message, state: FSMContext):
 
 
 @router.message(Command("help"))
-async def state_name(message: Message):
-    req = requests.get(url=f"{API}/users/{ADMIN}").json()
-    res = requests.get(f"{API}/users/{message.from_user.id}").json()
-    language = res["language"]
-    help_text = {
-        "uz": "👨🏻‍💻 Yordam uchun Adminga murojaat qiling",
-        "en": "👨🏻‍💻Please contact the Admin for assistance",
-        "ru": "👨🏻‍💻 Для помощи обратитесь к Администратору"
-    }
-    txt = help_text[language, help_text["en"]]
-    await message.answer(
-        f"{txt}\nhttps://t.me/{req['user_name']}", reply_markup=menu)
+async def state_name(message: Message, state: FSMContext):
+    try:
+        response = requests.get(f"{API}/users/{message.from_user.id}")
+        if response.status_code != 200:
+            text = "Tilni tanlang 🇺🇿| Choose your language 🇬🇧| Выберите язык 🇷🇺"
+            await message.answer(text, reply_markup=language_button)
+            return
+
+        req = response.json()
+        language = req.get("language", "en")
+
+        if req["is_registered"] == False:
+            full_name_prompt = {
+                "uz": "👤 To‘liq ismingizni kiriting (F.I.Sh):",
+                "en": "👤 Enter your full name (First, Last, and Surname):",
+                "ru": "👤 Введите ваше полное имя (Ф.И.О):"
+            }
+            txt = full_name_prompt.get(language, "Unknown language ❌")
+            await message.answer(text=txt, reply_markup=ReplyKeyboardRemove())
+            await state.set_state(SignupStates.name)
+            return
+
+        res = requests.get(f"{API}/users/{ADMIN}").json()
+
+        help_text = {
+            "uz": "👨🏻‍💻 Yordam uchun Adminga murojaat qiling",
+            "en": "👨🏻‍💻Please contact the Admin for assistance",
+            "ru": "👨🏻‍💻 Для помощи обратитесь к Администратору"
+        }
+        txt = help_text.get(language, "Unknown language ❌")
+        await message.answer(
+            f"{txt}\n\nhttps://t.me/{res['user_name']}", reply_markup=menu(language))
+    except Exception as e:
+        await message.answer(f"⚠️ So‘rovda xatolik: {e}", show_alert=True)
 
 
 @router.callback_query(lambda c: c.data.startswith("stlang_"))
