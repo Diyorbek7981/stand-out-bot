@@ -591,23 +591,23 @@ async def state_name(message: Message, state: FSMContext, bot: Bot):
     else:
         txt = {
             "uz": (
-                "✔️ Ma'lumotlarni tasdiqlash: Ha\n"
+                "✔️ Ma'lumotlarni tasdiqlash: ✔️\n"
                 "🗑 Jarayonni bekor qilish: /stop\n"
                 "🔄 Jarayonni boshidan boshlash: /new"
             ),
             "en": (
-                "✔️ Confirm the information: Yes\n"
+                "✔️ Confirm the information: ✔️\n"
                 "🗑 Cancel the process: /stop\n"
                 "🔄 Restart the process: /new"
             ),
             "ru": (
-                "✔️ Подтвердить информацию: Да\n"
+                "✔️ Подтвердить информацию: ✔️\n"
                 "🗑 Отменить процесс: /stop\n"
                 "🔄 Начать процесс заново: /new"
             )
         }
         text = txt.get(language, txt["en"])
-        await message.answer(txt, reply_markup=check)
+        await message.answer(text, reply_markup=check)
 
 
 @router.message(lambda msg: msg.text in ["📝 Ruhsatnoma olish", "📝 Get a permit", "📝 Получить разрешение"])
