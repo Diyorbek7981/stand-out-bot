@@ -5,5 +5,6 @@ class SignupStates(StatesGroup):
     name = State()
     age = State()
     phone = State()
+    role = State()
     certificate = State()
     check = State()

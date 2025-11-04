@@ -1,7 +1,7 @@
 from aiogram import F, Router, Bot
 from aiogram.types import Message
 from aiogram.types import CallbackQuery
-from buttons.inline import language_button, subscribe_keyboard, certificate_button
+from buttons.inline import language_button, subscribe_keyboard, certificate_button, role_keyboard
 from buttons.reply import get_menu, get_phone, check, menu
 import requests
 from config import API, CHANNEL, ADMIN
@@ -22,6 +22,7 @@ async def start(message: Message, state: FSMContext):
     bot = message.bot
     member = await bot.get_chat_member(chat_id=f"@{CHANNEL}", user_id=message.from_user.id)
     try:
+        await state.clear()
         response = requests.get(f"{API}/users/{message.from_user.id}")
         if response.status_code != 200:
             text = "Tilni tanlang 🇺🇿| Choose your language 🇬🇧| Выберите язык 🇷🇺"
@@ -65,6 +66,7 @@ async def start(message: Message, state: FSMContext):
 @router.message(Command("help"))
 async def state_name(message: Message, state: FSMContext):
     try:
+        await state.clear()
         response = requests.get(f"{API}/users/{message.from_user.id}")
         if response.status_code != 200:
             text = "Tilni tanlang 🇺🇿| Choose your language 🇬🇧| Выберите язык 🇷🇺"
@@ -451,19 +453,62 @@ async def state_phone(message: Message, state: FSMContext):
             "en": "✅ Accepted",
             "ru": "✅ Принято"
         }
+        choose_role_text = {
+            "uz": "📋 Siz kim bo‘lib ishtirok etmoqchisiz?",
+            "en": "📋 In which position do you want to be?",
+            "ru": "📋 В какой роли вы хотите участвовать?"
+        }
+        txt_acc = accepted_message.get(language, "Unknown language ❌")
+        txt_cer = choose_role_text.get(language, "Unknown language ❌")
+        await message.answer(f"{txt_acc}\n\n📞 {message.contact.phone_number}")
+        await message.answer(txt_cer, reply_markup=role_keyboard(language))
+        await state.set_state(SignupStates.role)
+
+    else:
+        await message.answer("❌ Send your contact information")
+
+
+@router.callback_query(SignupStates.role, F.data.startswith("role_"))
+async def save_user_role(callback: CallbackQuery, state: FSMContext):
+    await callback.message.delete()
+    role = callback.data.split("_")[1]
+    res = requests.get(f"{API}/users/{callback.from_user.id}").json()
+    language = res["language"]
+    if role in ["presenter", "debater", "observer"]:
+        await state.update_data(role=role)
+
+        text_map = {
+            "uz": {
+                "presenter": "🎤 Siz Taqdimotchi sifatida tanlandingiz!",
+                "debater": "🗣️ Siz Munozarachi sifatida tanlandingiz!",
+                "observer": "👀 Siz Kuzatuvchi sifatida tanlandingiz!",
+            },
+            "en": {
+                "presenter": "🎤 You have chosen to be a Presenter!",
+                "debater": "🗣️ You have chosen to be a Debater!",
+                "observer": "👀 You have chosen to be an Observer!",
+            },
+            "ru": {
+                "presenter": "🎤 Вы выбрали роль Презентатора!",
+                "debater": "🗣️ Вы выбрали роль Дебатёра!",
+                "observer": "👀 Вы выбрали роль Наблюдателя!",
+            },
+        }
+
         certificate_prompt = {
             "uz": "🎓 Sertifikat yoki IELTS darajangizni kiriting",
             "en": "🎓 Enter your Certificate or IELTS level",
             "ru": "🎓 Введите уровень вашего сертификата или IELTS"
         }
-        txt_acc = accepted_message.get(language, "Unknown language ❌")
-        txt_cer = certificate_prompt.get(language, "Unknown language ❌")
-        await message.answer(f"{txt_acc}\n\n📞 {message.contact.phone_number}")
-        await message.answer(txt_cer, reply_markup=certificate_button)
-        await state.set_state(SignupStates.certificate)
 
+        msg = text_map.get(language, text_map["en"]).get(role, "✅ Rol tanlandi!")
+        txt = certificate_prompt.get(language, 'Unknown language ❌')
+        await callback.message.answer(msg)
+        await callback.message.answer(txt, reply_markup=certificate_button)
+        await callback.answer()
+        await state.set_state(SignupStates.certificate)
     else:
-        await message.answer("❌ Send your contact information")
+        await callback.message.answer("❌ Please send the correct level")
 
 
 @router.callback_query(SignupStates.certificate)
@@ -483,6 +528,25 @@ async def state_certificate(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer(f"{txt_acc}\n\n🎓 {cert_level}")
 
         data = await state.get_data()
+        role_translation = {
+            "uz": {
+                "presenter": "Taqdimotchi",
+                "debater": "Munozarachi",
+                "observer": "Kuzatuvchi",
+            },
+            "en": {
+                "presenter": "Presenter",
+                "debater": "Debater",
+                "observer": "Observer",
+            },
+            "ru": {
+                "presenter": "Презентатор",
+                "debater": "Дебатёр",
+                "observer": "Наблюдатель",
+            },
+        }
+        role_text = role_translation.get(language, role_translation["en"]).get(data.get("role"), data.get("role"))
+
         templates = {
             "uz": (
                 f"Ariza Beruvchi: {data.get('name')}\n"
@@ -490,6 +554,7 @@ async def state_certificate(callback: CallbackQuery, state: FSMContext):
                 f"User name: @{callback.from_user.username}\n"
                 f"Telefon raqamingiz: {data.get('phone')}\n"
                 f"Darajangiz: {data.get('certificate')}\n"
+                f"O'rin: {role_text}\n"
             ),
             "en": (
                 f"Applicant: {data.get('name')}\n"
@@ -497,6 +562,7 @@ async def state_certificate(callback: CallbackQuery, state: FSMContext):
                 f"Username: @{callback.from_user.username}\n"
                 f"Phone number: {data.get('phone')}\n"
                 f"Certificate Level: {data.get('certificate')}\n"
+                f"Position: {role_text}\n"
             ),
             "ru": (
                 f"Заявитель: {data.get('name')}\n"
@@ -504,6 +570,7 @@ async def state_certificate(callback: CallbackQuery, state: FSMContext):
                 f"Имя пользователя: @{callback.from_user.username}\n"
                 f"Телефон: {data.get('phone')}\n"
                 f"Уровень сертификата: {data.get('certificate')}\n"
+                f"Позиция: {role_text}\n"
             )
         }
 
@@ -542,8 +609,9 @@ async def state_name(message: Message, state: FSMContext, bot: Bot):
             f"📅 Yosh: {data.get('age')}\n"
             f"🌐 User name: @{message.from_user.username}\n"
             f"📱 Telefon raqam: {data.get('phone')}\n"
+            f"👨🏽‍💻 O'rin: {data.get('role')}\n"
             f"🎓 Daraja: {data.get('certificate')}\n\n\n"
-            f"✔️ Arizani sayt orqli tasdiqlash  {API}/admin"
+            f"<a href='{API}/admin'>🌐 Arizani sayt orqali tasdiqlash</a>"
         )
 
         api_data = {
@@ -551,6 +619,7 @@ async def state_name(message: Message, state: FSMContext, bot: Bot):
             'age': data.get('age'),
             'phone_number': data.get('phone'),
             'certificate': data.get('certificate'),
+            'role': data.get('role'),
             'is_registered': True
         }
 
@@ -650,7 +719,8 @@ async def register_button_handler(message: Message):
             f"Yosh: {res.get('age')}\n"
             f"Username: @{message.from_user.username}\n"
             f"Telefon: {res.get('phone_number')}\n"
-            f"Daraja: {res.get('certificate')}"
+            f"Daraja: {res.get('certificate')}\n"
+            f"O'rin: {res.get('role')}"
         )
 
         qr = qrcode.QRCode(version=1, box_size=10, border=4)

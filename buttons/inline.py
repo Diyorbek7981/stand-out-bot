@@ -25,7 +25,7 @@ check_text = {
 }
 
 
-def subscribe_keyboard(language: str):  # ///////////////////////////  Resume
+def subscribe_keyboard(language: str):
     markup = InlineKeyboardBuilder()
     text = channel_subscribe_text.get(language, channel_subscribe_text["en"])
     txt = check_text.get(language, check_text["en"])
@@ -47,3 +47,32 @@ certificate_button = InlineKeyboardMarkup(
         ],
     ]
 )
+
+role_texts = {
+    "uz": {
+        "presenter": "🎤 Taqdimotchi",
+        "debater": "🗣️ Munozarachi",
+        "observer": "👀 Kuzatuvchi"
+    },
+    "en": {
+        "presenter": "🎤 Presenter",
+        "debater": "🗣️ Debater",
+        "observer": "👀 Observer"
+    },
+    "ru": {
+        "presenter": "🎤 Презентатор",
+        "debater": "🗣️ Дебатёр",
+        "observer": "👀 Наблюдатель"
+    }
+}
+
+
+def role_keyboard(language: str):
+    markup = InlineKeyboardBuilder()
+    texts = role_texts.get(language, role_texts["en"])
+
+    markup.button(text=texts["presenter"], callback_data="role_presenter")
+    markup.button(text=texts["debater"], callback_data="role_debater")
+    markup.button(text=texts["observer"], callback_data="role_observer")
+    markup.adjust(1)
+    return markup.as_markup()
